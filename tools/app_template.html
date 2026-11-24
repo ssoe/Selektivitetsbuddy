@@ -47,8 +47,6 @@ select[size] option:checked { background: var(--sel); color: var(--text); font-w
 .res.total .verdict { color: var(--ok); } .res.partial .verdict { color: var(--warn); } .res.none .verdict { color: var(--bad); }
 .meta { margin-top: 6px; font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
 .meta b { color: var(--text); font-weight: 600; }
-.ik { margin-top: 6px; font-weight: 600; font-size: 14px; }
-.ik.okk { color: var(--ok); } .ik.nok { color: var(--bad); }
 .strip { margin-top: 8px; overflow-x: auto; }
 .strip table { border-collapse: collapse; font-size: 12px; }
 .strip td, .strip th { border: 1px solid var(--line); padding: 3px 6px; text-align: center; white-space: nowrap; background: var(--card); }
@@ -69,25 +67,21 @@ a { color: var(--accent-ink); }
 .note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
 .raw { font-size: 12px; color: var(--muted); }
 @media (max-width: 760px) { .step { grid-template-columns: 1fr; } }
-.toolbar { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
+.titlebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
-@media (max-width: 760px) { main { grid-template-columns: 1fr; } .toolbar { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Selektivitetsbuddy</h1>
+  <div class="titlebar">
+    <h1>Selektivitetsbuddy</h1>
+    <button id="reset" type="button">Nulstil</button>
+  </div>
   <p>Selektivitet mellem to beskyttelseskomponenter ifølge Schneider Electric „Selectivity, Cascading and Coordination Guide" (september 2026). iDPN-tabeller, som ikke længere findes i 2026-guiden, er bevaret fra 2019-kataloget og markeret.</p>
 </header>
 <main>
-  <section class="card full">
-    <div class="toolbar">
-      <div><label for="volt">Spænding / net</label><select id="volt"></select></div>
-      <div><label for="ik">Maks. kortslutningsstrøm ved downstream-komponent, Ik (kA) – valgfri</label><input id="ik" type="number" min="0" step="0.1" placeholder="fx 6"></div>
-      <div><button id="reset" type="button">Nulstil</button></div>
-    </div>
-  </section>
 
   <section class="card">
     <h2><span class="badge">Upstream</span> Forsyningsside</h2>

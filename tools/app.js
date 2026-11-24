@@ -44,9 +44,7 @@ const CAT_ORDER = ["Sikringer", "Acti9 / modulære (MCB)", "ComPacT NSX / NSXm (
 
 // ---------- tilstand ----------
 const blank = () => ({ s: null, p: null, t: null, i: null, x: null });
-const S = { volt: "", up: blank(), dn: blank() };
-
-const tablesV = () => DATA.filter(t => !S.volt || t.volt === S.volt);
+const S = { up: blank(), dn: blank() };
 
 // matcher én k-nøgle mod et (delvist) valg. Tom udførelses-/udløserliste i tabellen = gælder alle.
 const keyOk = (k, sel) => k[0] === sel.s
@@ -187,12 +185,7 @@ function renderSide(side, items, kind) {
 // ---------- hovedrender ----------
 let upItems = [], dnItems = [];
 function render() {
-  // spænding
-  const volts = uniq(DATA.map(t => t.volt)).sort();
-  fillSelect("volt", volts, S.volt || null, v => v, "Alle spændinger");
-
-  const tv = tablesV();
-  upItems = tv.flatMap(t => t.cols.map((c, ci) => Object.assign(c, { _t: t, _i: ci })));
+  upItems = DATA.flatMap(t => t.cols.map((c, ci) => Object.assign(c, { _t: t, _i: ci })));
   const upFinal = renderSide("up", upItems, "col");
 
   // downstream: kun rækker i tabeller hvor den valgte upstream findes
@@ -223,7 +216,6 @@ function renderResult(upFinal, dnFinal) {
     out.innerHTML = '<p class="hint">Vælg upstream- og downstream-komponent trin for trin – felter med kun én mulighed udfyldes automatisk.</p>';
     return;
   }
-  const ik = parseFloat(String($("ik").value).replace(",", "."));
   const hits = [], seen = new Set();
   for (const c of upFinal) for (const r of dnFinal) {
     if (c._t !== r._t) continue;
@@ -234,7 +226,7 @@ function renderResult(upFinal, dnFinal) {
   }
   if (!hits.length) {
     out.innerHTML = '<p class="hint">Kombinationen findes ikke i de almindelige selektivitetstabeller.</p>';
-    renderCasc(out, ik);
+    renderCasc(out);
     return;
   }
   hits.sort((a, b) => a.t.volt.localeCompare(b.t.volt) || (a.t.src === "2019") - (b.t.src === "2019") || a.t.page - b.t.page);
@@ -244,7 +236,7 @@ function renderResult(upFinal, dnFinal) {
   if (volts.length > 1) {
     const p = document.createElement("p");
     p.className = "hint";
-    p.textContent = `Kombinationen findes i tabeller for ${volts.length} spændinger – vælg „Spænding / net" øverst for at afgrænse.`;
+    p.textContent = `Kombinationen findes i tabeller for ${volts.length} spændinger – resultaterne er vist pr. spænding.`;
     out.appendChild(p);
   }
   let lastVolt = null;
@@ -259,19 +251,11 @@ function renderResult(upFinal, dnFinal) {
     const k = classify(t.cells[r._i][c._i], t);
     const div = document.createElement("div");
     div.className = "res " + k.kind;
-    let verdict, ikLine = "";
-    if (k.kind === "total") {
-      verdict = "Total selektivitet";
-      if (!isNaN(ik)) ikLine = `<div class="ik okk">✓ Selektiv ved Ik = ${fmt(ik)} kA</div>`;
-    } else if (k.kind === "partial") {
+    let verdict;
+    if (k.kind === "total") verdict = "Total selektivitet";
+    else if (k.kind === "partial")
       verdict = `Delvis selektivitet – op til ${fmt(k.kA)} kA` + (t.unit === "A" ? ` <span style="font-weight:400">(${fmt(parseFloat(k.raw))} A)</span>` : "");
-      if (!isNaN(ik)) ikLine = ik <= k.kA
-        ? `<div class="ik okk">✓ Selektiv ved Ik = ${fmt(ik)} kA (≤ ${fmt(k.kA)} kA)</div>`
-        : `<div class="ik nok">✗ Ikke selektiv ved Ik = ${fmt(ik)} kA (> ${fmt(k.kA)} kA)</div>`;
-    } else {
-      verdict = t.ratio ? "Total selektivitet er ikke sikret" : "Ingen selektivitet";
-      if (!isNaN(ik)) ikLine = `<div class="ik nok">✗ Ikke selektiv</div>`;
-    }
+    else verdict = t.ratio ? "Total selektivitet er ikke sikret" : "Ingen selektivitet";
     const P = PDFS[t.src];
     const pdfLink = (pdfAvailable[t.src]
       ? `<a href="${encodeURI(P.file)}#page=${t.page}" target="_blank" rel="noopener">${t.ref} (PDF-side ${t.page})</a>`
@@ -282,7 +266,7 @@ function renderResult(upFinal, dnFinal) {
       t.ratio ? `<div>Sikring/sikring: total selektivitet kræver, at downstream-sikringen ikke overstiger tabelværdien (IEC 60269). Katalogets værdi „8000" ved 1250 A er tolket som 800 A.</div>` : "",
     ].join("");
     div.innerHTML = `
-      <div class="verdict">${verdict}</div>${ikLine}
+      <div class="verdict">${verdict}</div>
       <div class="meta">
         <div><b>Upstream i tabellen:</b> ${esc(c.raw)}</div>
         <div><b>Downstream i tabellen:</b> ${esc(r.raw || "–")}${t.ctx ? " · " + esc(t.ctx) : ""}</div>
@@ -292,14 +276,12 @@ function renderResult(upFinal, dnFinal) {
       ${strip(t, c, r)}`;
     out.appendChild(div);
   }
-  renderCasc(out, ik);
+  renderCasc(out);
 }
 
 // ---------- forstærket selektivitet ved kaskade (A-216 – A-245) ----------
 // CASC-tabellerne indgår ikke i valgmulighederne; de slås op ud fra det, der er valgt i de almindelige tabeller.
 const tripFam = s => /^TM/.test(s) ? "TM" : /^MicroLogic/.test(s) ? "ML" : s;
-// Kaskade-tabellerne findes for 220-240, 380-415 og 440 V AC; de almindelige MCCB-tabeller hedder „≤ 440 V AC".
-const cascVoltOk = (cv, v) => !v || (/V AC/.test(v) && !/690/.test(v));
 
 function cascColOk(c, sel) {
   const kOk = c.k.some(k => k[0] === sel.s
@@ -330,10 +312,9 @@ function cascValue(v) {
   return { a, b, kind: a == null ? "none" : a >= b ? "total" : "partial" };
 }
 
-function renderCasc(out, ik) {
+function renderCasc(out) {
   const res = [], empty = [];
   for (const t of CASC) {
-    if (!cascVoltOk(t.volt, S.volt)) continue;
     const cols = t.cols.map((c, i) => [c, i]).filter(([c]) => cascColOk(c, S.up));
     if (!cols.length) continue;
     const rows = t.rows.map((r, i) => [r, i]).filter(([r]) => cascRowOk(r, S.dn));
@@ -359,16 +340,11 @@ function renderCasc(out, ik) {
   }
   const MAX = 60;
   const lines = res.slice(0, MAX).map(({ t, c, r, v }) => {
-    let sel, ikc = "";
+    let sel;
     if (v.kind === "total") sel = `<span class="okc">Total – op til ${fmt(v.b)} kA</span>`;
     else if (v.kind === "partial") sel = `<span class="warnc">Op til ${fmt(v.a)} kA</span>`;
     else sel = `<span class="badc">Ingen selektivitet</span>`;
-    if (!isNaN(ik)) {
-      if (ik > v.b) ikc = `<span class="badc">✗ Ik &gt; ${fmt(v.b)} kA</span>`;
-      else if (v.a != null && ik <= v.a) ikc = `<span class="okc">✓ Selektiv</span>`;
-      else ikc = `<span class="badc">✗ Ikke selektiv</span>`;
-    }
-    return `<tr><td>${esc(t.volt)}</td><td>${esc(c.raw)}</td><td>${esc(r.raw)}</td><td>${sel}</td><td>${fmt(v.b)} kA</td>${isNaN(ik) ? "" : `<td>${ikc}</td>`}<td>${src(t)}</td></tr>`;
+    return `<tr><td>${esc(t.volt)}</td><td>${esc(c.raw)}</td><td>${esc(r.raw)}</td><td>${sel}</td><td>${fmt(v.b)} kA</td><td>${src(t)}</td></tr>`;
   }).join("");
   const sec = document.createElement("div");
   sec.className = "casc";
@@ -376,7 +352,7 @@ function renderCasc(out, ik) {
     <h3 class="vhead">Forstærket selektivitet ved kaskade</h3>
     <p class="note" style="margin-top:4px">Gælder kun når de to afbrydere også er i kaskade, dvs. når Ik ved downstream-afbryderen er større end dens egen brydeevne (Icu). Kombinationen kan så være selektiv op til en højere strøm end i de almindelige tabeller, og downstream-afbryderens brydeevne forstærkes. Kilde: „Selectivity enhanced by cascading" i 2026-guiden.</p>
     <div class="strip"><table>
-      <tr><th>Spænding</th><th>Upstream</th><th>Downstream</th><th>Selektivitet</th><th>Forstærket brydeevne</th>${isNaN(ik) ? "" : "<th>Ved Ik</th>"}<th>Kilde</th></tr>
+      <tr><th>Spænding</th><th>Upstream</th><th>Downstream</th><th>Selektivitet</th><th>Forstærket brydeevne</th><th>Kilde</th></tr>
       ${lines}
     </table></div>
     ${res.length > MAX ? `<p class="note">Viser ${MAX} af ${res.length} kombinationer – vælg flere felter for at afgrænse.</p>` : ""}`;
@@ -397,7 +373,5 @@ function strip(t, c, r) {
 // ---------- start ----------
 buildForm("up");
 buildForm("dn");
-$("volt").addEventListener("change", e => { S.volt = e.target.value === "\u0000" ? "" : e.target.value; render(); });
-$("ik").addEventListener("input", render);
-$("reset").addEventListener("click", () => { S.volt = ""; S.up = blank(); S.dn = blank(); $("ik").value = ""; render(); });
+$("reset").addEventListener("click", () => { S.up = blank(); S.dn = blank(); render(); });
 render();
