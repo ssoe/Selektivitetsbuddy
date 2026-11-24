@@ -1,0 +1,5 @@
+# Schneider-kataloget distribueres ikke via repo'et
+*.pdf
+.claude/
+__pycache__/
+*.json

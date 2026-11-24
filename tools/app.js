@@ -224,7 +224,11 @@ function renderResult(upFinal, dnFinal) {
     seen.add(key);
     hits.push({ t: c._t, c, r });
   }
-  if (!hits.length) { out.innerHTML = '<p class="hint">Kombinationen findes ikke i tabellerne.</p>'; return; }
+  if (!hits.length) {
+    out.innerHTML = '<p class="hint">Kombinationen findes ikke i de almindelige selektivitetstabeller.</p>';
+    renderCasc(out, ik);
+    return;
+  }
   hits.sort((a, b) => a.t.volt.localeCompare(b.t.volt) || (a.t.src === "2019") - (b.t.src === "2019") || a.t.page - b.t.page);
 
   out.innerHTML = "";
@@ -280,6 +284,95 @@ function renderResult(upFinal, dnFinal) {
       ${strip(t, c, r)}`;
     out.appendChild(div);
   }
+  renderCasc(out, ik);
+}
+
+// ---------- forstærket selektivitet ved kaskade (A-216 – A-245) ----------
+// CASC-tabellerne indgår ikke i valgmulighederne; de slås op ud fra det, der er valgt i de almindelige tabeller.
+const tripFam = s => /^TM/.test(s) ? "TM" : /^MicroLogic/.test(s) ? "ML" : s;
+// Kaskade-tabellerne findes for 220-240, 380-415 og 440 V AC; de almindelige MCCB-tabeller hedder „≤ 440 V AC".
+const cascVoltOk = (cv, v) => !v || (/V AC/.test(v) && !/690/.test(v));
+
+function cascColOk(c, sel) {
+  const kOk = c.k.some(k => k[0] === sel.s
+    && (sel.p == null || !k[1].length || k[1].includes(sel.p))
+    && (!sel.t || k[2].includes("") || k[2].some(x => tripFam(x) === tripFam(sel.t))));
+  if (!kOk) return false;
+  if (sel.i && c.In.length && !c.In.includes(sel.i)) return false;
+  const ir = /\bIr\s*(\d+(?:[.,]\d+)?)/.exec(sel.x || "");
+  if (ir && c.ir && nums(c.ir)[0] !== parseFloat(ir[1].replace(",", "."))) return false;
+  return true;
+}
+function cascRowOk(r, sel) {
+  if (!r.k.some(k => k[0] === sel.s && (sel.p == null || !k[1].length || k[1].includes(sel.p)))) return false;
+  if (!sel.i || !r.v) return true;
+  if (r.v.includes(sel.i)) return true;
+  if (r.rng.length === 2) {           // motorrækker: indstillingsområde, fx 0,1–0,16 A
+    const n = nums(sel.i);
+    if (n.length >= 2 && n.slice(-2).every((x, j) => x === r.rng[j])) return true;
+    if (n.length === 1 && n[0] >= r.rng[0] && n[0] <= r.rng[1]) return true;
+  }
+  return false;
+}
+function cascValue(v) {
+  const m = /^(\d+(?:[.,]\d+)?|-)\/(\d+(?:[.,]\d+)?)/.exec(v || "");
+  if (!m) return null;
+  const b = parseFloat(m[2].replace(",", "."));
+  const a = m[1] === "-" ? null : parseFloat(m[1].replace(",", "."));
+  return { a, b, kind: a == null ? "none" : a >= b ? "total" : "partial" };
+}
+
+function renderCasc(out, ik) {
+  const res = [], empty = [];
+  for (const t of CASC) {
+    if (!cascVoltOk(t.volt, S.volt)) continue;
+    const cols = t.cols.map((c, i) => [c, i]).filter(([c]) => cascColOk(c, S.up));
+    if (!cols.length) continue;
+    const rows = t.rows.map((r, i) => [r, i]).filter(([r]) => cascRowOk(r, S.dn));
+    const n = res.length;
+    for (const [r, ri] of rows) for (const [c, ci] of cols) {
+      const v = cascValue(t.cells[ri][ci]);
+      if (v) res.push({ t, c, r, v });
+    }
+    if (rows.length && res.length === n) empty.push(t);
+  }
+  const P = PDFS["2026"];
+  const src = t => pdfAvailable["2026"]
+    ? `<a href="${encodeURI(P.file)}#page=${t.page}" target="_blank" rel="noopener">${t.ref}</a>`
+    : `${t.ref} (PDF-side ${t.page})`;
+  if (!res.length) {
+    if (empty.length) {
+      const p = document.createElement("p");
+      p.className = "note";
+      p.innerHTML = `Forstærket selektivitet ved kaskade: kombinationen står i ${uniq(empty.map(src)).join(", ")}, men tabellen angiver ingen værdi for den.`;
+      out.appendChild(p);
+    }
+    return;
+  }
+  const MAX = 60;
+  const lines = res.slice(0, MAX).map(({ t, c, r, v }) => {
+    let sel, ikc = "";
+    if (v.kind === "total") sel = `<span class="okc">Total – op til ${fmt(v.b)} kA</span>`;
+    else if (v.kind === "partial") sel = `<span class="warnc">Op til ${fmt(v.a)} kA</span>`;
+    else sel = `<span class="badc">Ingen selektivitet</span>`;
+    if (!isNaN(ik)) {
+      if (ik > v.b) ikc = `<span class="badc">✗ Ik &gt; ${fmt(v.b)} kA</span>`;
+      else if (v.a != null && ik <= v.a) ikc = `<span class="okc">✓ Selektiv</span>`;
+      else ikc = `<span class="badc">✗ Ikke selektiv</span>`;
+    }
+    return `<tr><td>${esc(t.volt)}</td><td>${esc(c.raw)}</td><td>${esc(r.raw)}</td><td>${sel}</td><td>${fmt(v.b)} kA</td>${isNaN(ik) ? "" : `<td>${ikc}</td>`}<td>${src(t)}</td></tr>`;
+  }).join("");
+  const sec = document.createElement("div");
+  sec.className = "casc";
+  sec.innerHTML = `
+    <h3 class="vhead">Forstærket selektivitet ved kaskade</h3>
+    <p class="note" style="margin-top:4px">Gælder kun når de to afbrydere også er i kaskade, dvs. når Ik ved downstream-afbryderen er større end dens egen brydeevne (Icu). Kombinationen kan så være selektiv op til en højere strøm end i de almindelige tabeller, og downstream-afbryderens brydeevne forstærkes. Kilde: „Selectivity enhanced by cascading" i 2026-guiden.</p>
+    <div class="strip"><table>
+      <tr><th>Spænding</th><th>Upstream</th><th>Downstream</th><th>Selektivitet</th><th>Forstærket brydeevne</th>${isNaN(ik) ? "" : "<th>Ved Ik</th>"}<th>Kilde</th></tr>
+      ${lines}
+    </table></div>
+    ${res.length > MAX ? `<p class="note">Viser ${MAX} af ${res.length} kombinationer – vælg flere felter for at afgrænse.</p>` : ""}`;
+  out.appendChild(sec);
 }
 
 // rækken for samme upstream-serie/udførelse/udløser på tværs af mærkestrømme

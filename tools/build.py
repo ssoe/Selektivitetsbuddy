@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from normalize import series, trips, up_rating, dn_rating, NSX_SIZES  # noqa: E402
 
 new_src, old_src, out, tpl_path = sys.argv[1:5]
+casc_src = sys.argv[5] if len(sys.argv) > 5 else None
 
 
 def clean(s):
@@ -162,10 +163,80 @@ tables.append(dict(
     cols=[dict(k=[['gG-sikring', [], ['']]], In=str(f[0]), st='', raw='FuPacT gG %d A' % f[0]) for f in ff],
     rows=rows, cells=cells))
 
+
+# ---------- "Selectivity enhanced by cascading" (2026: A-216 - A-245), parsed by parse_casc.py ----------
+def expand(rating, k):
+    """'≤ 100' / '125-160' / '80/100' / '40' -> list of In values (strings) bounded by the series range."""
+    r = clean(rating).replace('A', '').strip()
+    if not r:
+        return None
+    if re.fullmatch(r'\d+(?:[.,]\d+)?(?:\s*/\s*\d+(?:[.,]\d+)?)+', r):      # 80/100, 40/50
+        vals = [fmt_num(num(x)) for x in r.split('/')]
+    else:
+        vals, _, _ = dn_rating(r.replace(' to ', '-'))
+    return limit(vals, k, r) if vals else None
+
+
+def fmt_num(n):
+    return ('%g' % n).replace('.', ',')
+
+
+def casc_volt(v):
+    v = clean(v).replace('Ue:', '').strip()
+    m = re.search(r'\d[\d\-/ ]*V(?: AC)?', v)
+    return m.group(0).strip() if m else v
+
+
+def convert_casc(t):
+    up_title, dn_title = clean(t['up']), clean(t['dn'])
+    cols = []
+    for c in t['columns']:
+        rating, setting = c['rating'], c['setting']
+        if not rating and setting:                 # TM-D tables: the "Setting Ir" row is the rating
+            rating, setting = setting, ''
+        prod = clean(c['product'] + ' ' + c['trip'])
+        k = keys(prod, up_title)
+        ins = expand(rating, k)
+        k = keys(prod, up_title, max(num(x) for x in ins) if ins else None)
+        cols.append(dict(k=k, In=ins or [], inl=clean(rating), ir=('Ir ' + clean(setting)) if setting else '',
+                         icu=clean(c['icu']).replace(' kA', '').replace(' ', ''),
+                         raw=' · '.join(x for x in (clean(c['product']), c['trip'] and clean(c['trip']),
+                                                     ('In ' + clean(rating)) if rating else '',
+                                                     ('Ir ' + clean(setting)) if setting else '',
+                                                     ('Icu ' + clean(c['icu']).replace(' kA', '') + ' kA') if c['icu'] else '') if x)))
+    rows = []
+    for r in t['rows']:
+        fam = clean(r['family'])
+        rating = r['rating']
+        if rating and rating == r['icu'] and not re.search(r'\d', fam.split()[-1]):
+            rating = ''                            # stray Icu value printed in the rating column
+        label = fam + (' ' + clean(r['trip']) if r['trip'] else '')
+        k = keys(label, dn_title)
+        gv = re.match(r'GV\d\s?(ME|PE|P|LE|L)\d', fam)      # GV2 ME01 / GV2 P01 / GV2 L03 -> udførelse
+        if gv:
+            k = [[x[0], [gv.group(1)], x[2]] if x[0].startswith('TeSys GV') else x for x in k]
+        vals = expand(rating, k)
+        rng = [num(x) for x in re.findall(r'\d+(?:[.,]\d+)?', clean(rating))] if rating else []
+        rows.append(dict(k=k, v=vals, rng=rng if len(rng) == 2 and '-' in rating else [], lab=clean(rating),
+                         icu=clean(r['icu']), icn=clean(r['icn']),
+                         raw=' · '.join(x for x in (label, ('In ' + clean(rating)) if rating else '',
+                                                     ('Icu ' + clean(r['icu']) + ' kA') if r['icu'] else '',
+                                                     ('Icn ' + clean(r['icn'])) if r['icn'] else '') if x)))
+    return dict(id='casc_p%d_%d' % (t['page'], t['tableIndex']), page=t['page'], ref=t['ref'],
+                up=up_title, dn=dn_title, volt=casc_volt(t['voltage']), cols=cols, rows=rows,
+                cells=[[(v or '') for v in row] for row in t['cells']])
+
+
+casc = []
+if casc_src:
+    casc = [convert_casc(t) for t in json.load(open(casc_src, encoding='utf-8'))]
+
 data = json.dumps(tables, ensure_ascii=False, separators=(',', ':'))
+cdata = json.dumps(casc, ensure_ascii=False, separators=(',', ':'))
 tpl = open(tpl_path, encoding='utf-8').read()
 app = open(os.path.join(os.path.dirname(os.path.abspath(tpl_path)), 'app.js'), encoding='utf-8').read()
-html = tpl.replace('<script src="app.js"></script>', '<script>\nconst DATA = ' + data + ';\n' + app + '\n</script>')
+html = tpl.replace('<script src="app.js"></script>',
+                   '<script>\nconst DATA = ' + data + ';\nconst CASC = ' + cdata + ';\n' + app + '\n</script>')
 assert html != tpl, 'script placeholder not found in template'
 open(out, 'w', encoding='utf-8').write(html)
 
@@ -173,5 +244,7 @@ open(out, 'w', encoding='utf-8').write(html)
 up_series = sorted({k[0] for t in tables for c in t['cols'] for k in c['k']})
 dn_series = sorted({k[0] for t in tables for r in t['rows'] for k in r['k']})
 print(len(tables), 'tables (2019-only:', sum(t['src'] == '2019' for t in tables), ')')
+print(len(casc), 'cascading tables, series up:', sorted({k[0] for t in casc for c in t['cols'] for k in c['k']}),
+      'down:', sorted({k[0] for t in casc for r in t['rows'] for k in r['k']}))
 print('upstream series (%d):' % len(up_series), ' | '.join(up_series))
 print('downstream series (%d):' % len(dn_series), ' | '.join(dn_series))

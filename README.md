@@ -18,14 +18,20 @@ Kræver Python med PyMuPDF (`pip install pymupdf`).
 ```
 python tools/parse.py "Selektivitetstabeller 2026.pdf" new.json "25-150,152-184,190-199"
 python tools/parse.py "Schneider - Selektivitetstabeller.pdf" old.json
-python tools/build.py new.json old.json index.html tools/app_template.html
+python tools/parse_casc.py "Selektivitetstabeller 2026.pdf" casc.json
+python tools/build.py new.json old.json index.html tools/app_template.html casc.json
 ```
+
+`casc.json` er valgfri. Den indeholder tabellerne „Selectivity enhanced by cascading" (A-216 – A-245, PDF-side 224-253).
+Appen viser dem som et ekstra afsnit under resultatet, når den valgte kombination findes der.
 
 `tools/compare2.py old.json new.json` lister forskelle mellem de to kataloger.
 
 ### Filer i `tools/`
 
 - `parse.py` – læser tabellerne ud af PDF'en (tekstpositioner og tegnede linjer).
+- `parse_casc.py` – læser tabellerne for forstærket selektivitet ved kaskade (celler „selektivitetsgrænse /
+  forstærket brydeevne", fx `16/25`).
 - `normalize.py` – oversætter katalogets mange stavemåder til faste felter: serie, udførelse
   (fx H1/H2, N/H/L), udløser/kurve, In og indstilling (Ir/Im).
 - `build.py` – samler data og indsætter dem sammen med `app.js` i `app_template.html` → `index.html`.
