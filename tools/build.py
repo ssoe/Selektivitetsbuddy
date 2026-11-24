@@ -267,6 +267,37 @@ for t in json.load(open(old_src, encoding='utf-8')):
             t = dict(t, rows=[t['rows'][i] for i in keep], cells=[t['cells'][i] for i in keep])
             tables.append(convert(t, '2019'))
 
+# Motor rows that cover a range of sizes ("GV2 L03 - L06", "GV2 L07 - L32 + LA9 LB920", "GV3 32-65"): limit them
+# to the labels of exactly those sizes, so they do not answer for every GV2 L / GV3.
+def _code(label):
+    m = re.search(r' · (\d{2,3})\b', label)
+    return int(m.group(1)) if m else None
+
+
+gv_labels = {}
+for t in tables:
+    for r in t['rows']:
+        for k in r['k']:
+            if k[0].startswith('TeSys GV') and r['v']:
+                for p in k[1]:
+                    gv_labels.setdefault((k[0], p), set()).add(r['v'][0])
+for t in tables:
+    for r in t['rows']:
+        if r['v'] or not r['k'] or not r['k'][0][0].startswith('TeSys GV'):
+            continue
+        m = re.search(r'GV\d\s?(ME|PEM|PE|P|LE|L)?\s?(\d{2,3})\s*(?:-|\.{2,3}|…)\s*(?:ME|PEM|PE|P|LE|L)?\s?(\d{2,3})\b',
+                      r['raw'].split(' · ')[0])
+        if not m:
+            continue
+        lo, hi = int(m.group(2)), int(m.group(3))
+        perfs = [m.group(1)] if m.group(1) else [p for (s, p) in gv_labels if s == r['k'][0][0]]
+        labs = sorted({lb for p in perfs for lb in gv_labels.get((r['k'][0][0], p), ())
+                       if _code(lb) is not None and lo <= _code(lb) <= hi})
+        if labs:
+            r['v'] = labs
+            if m.group(1):
+                r['k'] = [[x[0], [m.group(1)], x[2]] for x in r['k']]
+
 # Fuse-fuse ratio table (2026: A-181). Catalogue value "8000" for 1250 A is a typo for 800.
 ff = [(16, 6, 4), (20, 10, 6), (25, 16, 8), (32, 20, 10), (40, 25, 12), (50, 32, 16), (63, 40, 20), (80, 50, 25),
       (100, 63, 32), (125, 80, 40), (160, 100, 63), (200, 125, 80), (250, 160, 125), (315, 200, 125), (400, 250, 160),

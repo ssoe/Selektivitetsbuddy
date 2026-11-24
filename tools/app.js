@@ -134,14 +134,18 @@ function renderSide(side, items, kind) {
   // 2. udførelse
   let m = items.filter(it => ok(it, 1));
   const perfs = uniq(m.flatMap(it => it.k.filter(k => k[0] === sel.s).flatMap(k => k[1])));
-  const PERF_ORDER = ["E", "B", "F", "N", "H", "S", "L", "LB", "R", "P", "M", "HB1", "HB2", "N1", "H1", "H2", "H2V", "H3", "L1", "HA", "HF", "HH", "NA",
-    "ME", "PE", "PEM", "LE"];
+  // motorværn: "udførelsen" er typen (GV2ME, GV2P, GV2L …), vist med fuld typebetegnelse
+  const gv = /^TeSys (GV\d)$/.exec(sel.s);
+  const PERF_ORDER = gv ? ["ME", "P", "PE", "PEM", "L", "LE"]
+    : ["E", "B", "F", "N", "H", "S", "L", "LB", "R", "P", "M", "HB1", "HB2", "N1", "H1", "H2", "H2V", "H3", "L1", "HA", "HF", "HH", "NA"];
   perfs.sort((a, b) => PERF_ORDER.indexOf(a) - PERF_ORDER.indexOf(b));
   if (sel.p && !perfs.includes(sel.p)) sel.p = null;
   if (perfs.length === 1) sel.p = perfs[0];
   show("p", perfs.length > 1);
+  $(`${side}_row_p`).querySelector("label").textContent = gv ? "Type" : STEPS[1].label;
   // downstream: udførelse er valgfri (påvirker sjældent tabellerne); upstream skal vælges
-  fillSelect(`${side}_p`, perfs, sel.p, v => v, side === "dn" ? "Alle udførelser" : "— vælg —");
+  fillSelect(`${side}_p`, perfs, sel.p, v => gv ? gv[1] + v : v,
+    side === "dn" ? (gv ? "Alle typer" : "Alle udførelser") : "— vælg —");
 
   // 3. udløser / kurve
   m = items.filter(it => ok(it, 2));
