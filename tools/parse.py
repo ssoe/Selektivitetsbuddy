@@ -192,13 +192,15 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
                 dhdr = r
     # 2026 layout: separate "CB rating" and "Trip unit setting Ir" columns
     cbX = irX = None
-    for r in header_rows:
-        for s in r['spans']:
-            if s['x0'] < X0 and s['x0'] > tableLeft + 20:
-                if re.match(r'^CB rating', s['t']) and cbX is None:
-                    cbX = s['x0']
-                if re.match(r'^Trip unit$|^Trip unit setting|^setting Ir', s['t']) and irX is None and cbX is not None and s['x0'] > cbX + 5:
-                    irX = s['x0']
+    dn_idx = next((i for i, r in enumerate(header_rows) if any(s['t'] in ('Downstream', 'Down-', 'Downstream CB') for s in r['spans'])), None)
+    if dn_idx is not None:
+        cx = [s['x0'] for r in header_rows[dn_idx:] for s in r['spans']
+              if tableLeft + 20 < s['x0'] < X0 and re.match(r'^(CB rating|Trip unit$|Trip unit rating|Trip unit setting|setting Ir)', s['t'])]
+        cl = cluster(cx, 4)
+        if cl:
+            cbX = cl[0]
+        if len(cl) >= 2:
+            irX = cl[1]
     if cbX is not None:
         ratingX = cbX
     if ratingX is None:
@@ -311,23 +313,36 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
     # middle label column (e.g. "Curve" B/C/D in DC tables): short texts in a column between family and rating
     midX = None
     mids = [s['x0'] for r in body_rows if not r['band'] for s in r['spans']
-            if familyX + 25 < s['x0'] < ratingX - 3 and len(s['t']) <= 3]
+            if familyX + 25 < s['x0'] < ratingX - 3 and re.fullmatch(r'[BCDKZ]', s['t'])]
     if len(mids) >= 2:
         midX = cluster(mids, 4)[0]
 
     def is_mid(s):
-        return midX is not None and abs(s['x0'] - midX) < 5 and len(s['t']) <= 3
+        return midX is not None and abs(s['x0'] - midX) < 5 and re.fullmatch(r'[BCDKZ]', s['t'])
 
     fam_text = {}
+    row_label = {}   # id(row) -> own family text on that row
+    seg_rows = {}
     for r in body_rows:
         if r['band']:
             continue
+        own = [s['t'] for s in r['spans'] if s['x0'] < ratingX - 3 and not is_mid(s)]
         for s in r['spans']:
             if s['x0'] < ratingX - 3 and not is_mid(s):
                 fam_text.setdefault(seg_of(s['yc']), []).append(s['t'])
+        if own:
+            row_label[id(r)] = ' '.join(own)
+        if any(s['x0'] >= X0 - 1 for s in r['spans']) or any(ratingX - 3 <= s['x0'] < X0 for s in r['spans']):
+            seg_rows.setdefault(seg_of(r['yc']), []).append(r)
+    # segments where (almost) every data row carries its own device name (motor tables):
+    # use the per-row name instead of concatenating all lines of the segment
+    per_row = {sg for sg, rs in seg_rows.items()
+               if len(rs) >= 3 and sum(id(r) in row_label for r in rs) >= 0.8 * len(rs)
+               and (len(rs) >= 6 or len(set(row_label.get(id(r), '') for r in rs)) < len(rs))}
     out_rows, cells = [], []
     cur_mid, cur_seg = '', None
     cur_cb, cur_cb_seg = '', None
+    cur_row_label = ''
     for r in body_rows:
         if r['band']:
             continue
@@ -359,7 +374,12 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
                 continue
             v = s['t']
             vals[c] = (vals[c] + ' ' + v) if vals[c] else v
-        fam = ' '.join(fam_text.get(sg, []))
+        if sg in per_row:
+            if id(r) in row_label:
+                cur_row_label = row_label[id(r)]
+            fam = cur_row_label
+        else:
+            fam = ' '.join(fam_text.get(sg, []))
         if cur_mid:
             fam = fam + ' – curve ' + cur_mid
         out_rows.append(dict(family=fam, rating=rt))

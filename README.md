@@ -23,6 +23,14 @@ python tools/build.py new.json old.json index.html tools/app_template.html
 
 `tools/compare2.py old.json new.json` lister forskelle mellem de to kataloger.
 
+### Filer i `tools/`
+
+- `parse.py` – læser tabellerne ud af PDF'en (tekstpositioner og tegnede linjer).
+- `normalize.py` – oversætter katalogets mange stavemåder til faste felter: serie, udførelse
+  (fx H1/H2, N/H/L), udløser/kurve, In og indstilling (Ir/Im).
+- `build.py` – samler data og indsætter dem sammen med `app.js` i `app_template.html` → `index.html`.
+- `app.js` – app-logikken (trinvise valg og opslag).
+
 ## Ansvarsfraskrivelse
 
 Data er udtrukket automatisk og kan indeholde fejl. Kataloget er den gældende kilde.

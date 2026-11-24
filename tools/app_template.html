@@ -59,6 +59,13 @@ a { color: var(--accent-ink); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .legend .l1::before { background: var(--ok); } .legend .l2::before { background: var(--warn); } .legend .l3::before { background: var(--bad); }
+.step { display: grid; grid-template-columns: 9.5em 1fr; gap: 4px 10px; align-items: center; margin-top: 8px; }
+.step label { margin: 0; }
+.step.off { display: none; }
+.vhead { margin: 6px 0 0; font-size: 14px; }
+.note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.raw { font-size: 12px; color: var(--muted); }
+@media (max-width: 760px) { .step { grid-template-columns: 1fr; } }
 .toolbar { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
 button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
@@ -81,22 +88,12 @@ button:hover { border-color: var(--accent); }
 
   <section class="card">
     <h2><span class="badge">Upstream</span> Forsyningsside</h2>
-    <label for="upq">Søg komponent <span class="count" id="upn"></span></label>
-    <input id="upq" type="search" placeholder="fx NSX250, Masterpact, gG fuse, iC60 …" autocomplete="off">
-    <label for="up">Komponent / udløser</label>
-    <select id="up" size="8"></select>
-    <label for="upr">Mærkestrøm / indstilling</label>
-    <select id="upr"></select>
+    <div id="upForm"></div>
   </section>
 
   <section class="card">
     <h2><span class="badge">Downstream</span> Belastningsside</h2>
-    <label for="dnq">Søg komponent <span class="count" id="dnn"></span></label>
-    <input id="dnq" type="search" placeholder="fx NSX100, iC60, gG …" autocomplete="off">
-    <label for="dn">Komponent (kun dem der findes i tabel med valgt upstream)</label>
-    <select id="dn" size="8"></select>
-    <label for="dnr">Mærkestrøm</label>
-    <select id="dnr"></select>
+    <div id="dnForm"></div>
   </section>
 
   <section class="card full">
@@ -106,170 +103,7 @@ button:hover { border-color: var(--accent); }
   </section>
   <p class="hint full" style="margin:0">Ansvarsfraskrivelse: Data er udtrukket automatisk fra Schneider Electric „Selectivity, Cascading and Coordination Guide" (2026) og – for iDPN – „Complementary technical information" (2019), og kan indeholde fejl. Kataloget er den gældende kilde – kontrollér altid resultatet mod den angivne katalogside, inden det bruges i projektering. Værktøjet er ikke udgivet af eller tilknyttet Schneider Electric.</p>
 </main>
-<script>
-const DATA = /*__DATA__*/null;
-// PDF'erne lægges valgfrit ved siden af index.html (de er ikke med i git-repo'et).
-// Findes en PDF ikke, vises kun sidehenvisningen som tekst.
-const PDFS = {
-  "2026": { file: "Selektivitetstabeller 2026.pdf", name: "Selectivity, Cascading and Coordination Guide (2026)" },
-  "2019": { file: "Schneider - Selektivitetstabeller.pdf", name: "Complementary technical information (2019)" },
-};
-const pdfAvailable = {};
-for (const [k, p] of Object.entries(PDFS)) {
-  pdfAvailable[k] = location.protocol === "file:"; // fetch virker ikke på file://, antag at PDF'en ligger der lokalt
-  fetch(encodeURI(p.file), { method: "HEAD" }).then(r => { pdfAvailable[k] = r.ok; render(); }).catch(() => {});
-}
-const $ = id => document.getElementById(id);
-const S = { volt: "", up: null, upr: null, dn: null, dnr: null };
+<script src="app.js"></script>
 
-const nums = s => (String(s).match(/\d+(?:[.,]\d+)?/g) || []).map(x => parseFloat(x.replace(",", ".")));
-function cmpNum(a, b) {
-  const x = nums(a), y = nums(b);
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    const d = (x[i] ?? -1) - (y[i] ?? -1);
-    if (d) return d;
-  }
-  return String(a).localeCompare(String(b), "da");
-}
-const uniq = a => [...new Set(a)];
-const tablesV = () => DATA.filter(t => !S.volt || t.volt === S.volt);
-const ratingLabel = r => r || "Alle mærkestrømme";
-const fmt = n => n.toLocaleString("da-DK", { maximumFractionDigits: 3 });
-
-function fill(sel, items, value, labelFn = x => x) {
-  sel.innerHTML = "";
-  for (const it of items) {
-    const o = document.createElement("option");
-    o.value = it; o.textContent = labelFn(it);
-    if (it === value) o.selected = true;
-    sel.appendChild(o);
-  }
-}
-
-function render() {
-  // spændinger
-  fill($("volt"), ["", ...uniq(DATA.map(t => t.volt)).sort()], S.volt, v => v || "Alle spændinger");
-
-  // upstream
-  const tv = tablesV();
-  const q = $("upq").value.trim().toLowerCase();
-  let ups = uniq(tv.flatMap(t => t.cols.map(c => c[0]))).sort((a, b) => a.localeCompare(b, "da"));
-  if (S.up && !ups.includes(S.up)) S.up = null;
-  const upsShown = ups.filter(u => !q || u.toLowerCase().includes(q) || u === S.up);
-  $("upn").textContent = `(${upsShown.length} af ${ups.length})`;
-  fill($("up"), upsShown, S.up);
-
-  const upTabs = S.up ? tv.filter(t => t.cols.some(c => c[0] === S.up)) : [];
-  const uprs = uniq(upTabs.flatMap(t => t.cols.filter(c => c[0] === S.up).map(c => c[1]))).sort(cmpNum);
-  if (S.upr !== null && !uprs.includes(S.upr)) S.upr = null;
-  if (S.upr === null && uprs.length === 1) S.upr = uprs[0];
-  fill($("upr"), S.up ? ["\u0000", ...uprs] : ["\u0000"], S.upr ?? "\u0000", r => r === "\u0000" ? (S.up ? "— vælg —" : "Vælg først komponent") : ratingLabel(r));
-
-  // downstream (kun tabeller hvor valgt upstream + rating findes)
-  const pairTabs = (S.up && S.upr !== null) ? upTabs.filter(t => t.cols.some(c => c[0] === S.up && c[1] === S.upr)) : [];
-  const dq = $("dnq").value.trim().toLowerCase();
-  const dns = uniq(pairTabs.flatMap(t => t.rows.map(r => r[0]))).sort((a, b) => a.localeCompare(b, "da"));
-  if (S.dn && !dns.includes(S.dn)) S.dn = null;
-  const dnsShown = dns.filter(d => !dq || d.toLowerCase().includes(dq) || d === S.dn);
-  $("dnn").textContent = pairTabs.length ? `(${dnsShown.length} af ${dns.length})` : "";
-  fill($("dn"), dnsShown, S.dn);
-
-  const dnrs = S.dn ? uniq(pairTabs.flatMap(t => t.rows.filter(r => r[0] === S.dn).map(r => r[1]))).sort(cmpNum) : [];
-  if (S.dnr !== null && !dnrs.includes(S.dnr)) S.dnr = null;
-  if (S.dnr === null && dnrs.length === 1) S.dnr = dnrs[0];
-  fill($("dnr"), S.dn ? ["\u0000", ...dnrs] : ["\u0000"], S.dnr ?? "\u0000", r => r === "\u0000" ? (S.dn ? "— vælg —" : "Vælg først komponent") : ratingLabel(r));
-
-  renderResult(pairTabs);
-}
-
-function classify(v, t) {
-  const raw = (v || "").trim();
-  const foot = raw.endsWith("*");
-  const val = raw.replace(/\*$/, "");
-  if (val === "T") return { kind: "total", foot };
-  if (/^\d+(?:[.,]\d+)?$/.test(val)) {
-    const n = parseFloat(val.replace(",", "."));
-    const kA = t.unit === "A" ? n / 1000 : n;
-    return { kind: "partial", kA, raw: val, foot };
-  }
-  return { kind: "none", foot };
-}
-
-function renderResult(pairTabs) {
-  const out = $("out");
-  if (!S.up || S.upr === null || !S.dn || S.dnr === null) {
-    out.innerHTML = '<p class="hint">Vælg upstream- og downstream-komponent samt mærkestrømme for at se selektiviteten.</p>';
-    return;
-  }
-  const ik = parseFloat(String($("ik").value).replace(",", "."));
-  const hits = [];
-  for (const t of pairTabs) {
-    const ci = t.cols.map((c, i) => (c[0] === S.up && c[1] === S.upr) ? i : -1).filter(i => i >= 0);
-    const ri = t.rows.map((r, i) => (r[0] === S.dn && r[1] === S.dnr) ? i : -1).filter(i => i >= 0);
-    for (const c of ci) for (const r of ri) hits.push({ t, c, r });
-  }
-  if (!hits.length) { out.innerHTML = '<p class="hint">Kombinationen findes ikke i tabellerne.</p>'; return; }
-
-  out.innerHTML = "";
-  for (const { t, c, r } of hits) {
-    const v = t.cells[r][c];
-    const k = classify(v, t);
-    const div = document.createElement("div");
-    div.className = "res " + k.kind;
-    let verdict, ikLine = "";
-    if (k.kind === "total") {
-      verdict = "Total selektivitet";
-      if (!isNaN(ik)) ikLine = `<div class="ik okk">✓ Selektiv ved Ik = ${fmt(ik)} kA</div>`;
-    } else if (k.kind === "partial") {
-      verdict = `Delvis selektivitet – op til ${fmt(k.kA)} kA` + (t.unit === "A" ? ` <span style="font-weight:400">(${fmt(parseFloat(k.raw))} A)</span>` : "");
-      if (!isNaN(ik)) ikLine = ik <= k.kA
-        ? `<div class="ik okk">✓ Selektiv ved Ik = ${fmt(ik)} kA (≤ ${fmt(k.kA)} kA)</div>`
-        : `<div class="ik nok">✗ Ikke selektiv ved Ik = ${fmt(ik)} kA (> ${fmt(k.kA)} kA)</div>`;
-    } else {
-      verdict = t.ratio ? "Total selektivitet er ikke sikret" : "Ingen selektivitet";
-      if (!isNaN(ik)) ikLine = `<div class="ik nok">✗ Ikke selektiv</div>`;
-    }
-    const ratioNote = t.ratio ? `<div>Sikring/sikring: total selektivitet kræver at downstream-sikringen ikke overstiger tabelværdien (IEC 60269). Katalogets værdi „8000" ved 1250 A er tolket som 800 A.</div>` : "";
-    const footNote = k.foot ? `<div><b>OBS:</b> Værdien har en fodnote i kataloget – læs fodnoten på siden.</div>` : "";
-    const P = PDFS[t.src];
-    const pdfLink = (pdfAvailable[t.src]
-      ? `<a href="${encodeURI(P.file)}#page=${t.page}" target="_blank" rel="noopener">${t.ref} (PDF-side ${t.page})</a>`
-      : `side ${t.ref} (PDF-side ${t.page})`) + ` · ${P.name}`;
-    const oldNote = t.src === "2019" ? `<div><b>OBS:</b> Tabellen findes kun i 2019-kataloget og er ikke med i 2026-guiden – kontrollér om produktet stadig er aktuelt.</div>` : "";
-    div.innerHTML = `
-      <div class="verdict">${verdict}</div>${ikLine}
-      <div class="meta">
-        <div><b>Upstream:</b> ${esc(S.up)} · ${esc(ratingLabel(S.upr))}</div>
-        <div><b>Downstream:</b> ${esc(S.dn)} · ${esc(ratingLabel(S.dnr))}${t.ctx ? " · " + esc(t.ctx) : ""}</div>
-        <div><b>Tabel:</b> ${esc(t.up)} → ${esc(t.dn)} · ${esc(t.volt)} · værdier i ${t.unit}</div>
-        <div><b>Kilde:</b> ${pdfLink}</div>${oldNote}${footNote}${ratioNote}
-      </div>
-      ${strip(t, c, r)}`;
-    out.appendChild(div);
-  }
-}
-
-function strip(t, c, r) {
-  // hele rækken for samme upstream-komponent, så man kan se nabo-mærkestrømme
-  const cols = t.cols.map((x, i) => [x, i]).filter(([x]) => x[0] === S.up);
-  if (cols.length < 2) return "";
-  const head = cols.map(([x, i]) => `<th class="${i === c ? "cur" : ""}">${esc(x[1].replace(/^(In|Rating|Setting Ir:?|Ir setting|Ir)\s*/i, ""))}</th>`).join("");
-  const body = cols.map(([x, i]) => { const v = (t.cells[r][i] || "").replace(/\*$/, "*"); return `<td class="${i === c ? "cur " : ""}${v.startsWith("T") ? "T" : ""}">${esc(v || "–")}</td>`; }).join("");
-  return `<div class="strip"><table><tr><th>Upstream →</th>${head}</tr><tr><th>${esc(ratingLabel(S.dnr))}</th>${body}</tr></table></div>`;
-}
-
-function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
-
-$("volt").addEventListener("change", e => { S.volt = e.target.value; render(); });
-$("upq").addEventListener("input", render);
-$("dnq").addEventListener("input", render);
-$("up").addEventListener("change", e => { S.up = e.target.value; S.upr = null; S.dn = null; S.dnr = null; render(); });
-$("upr").addEventListener("change", e => { S.upr = e.target.value === "\u0000" ? null : e.target.value; render(); });
-$("dn").addEventListener("change", e => { S.dn = e.target.value; S.dnr = null; render(); });
-$("dnr").addEventListener("change", e => { S.dnr = e.target.value === "\u0000" ? null : e.target.value; render(); });
-$("ik").addEventListener("input", render);
-$("reset").addEventListener("click", () => { Object.assign(S, { volt: "", up: null, upr: null, dn: null, dnr: null }); $("upq").value = ""; $("dnq").value = ""; $("ik").value = ""; render(); });
-render();
-</script>
 </body>
 </html>
