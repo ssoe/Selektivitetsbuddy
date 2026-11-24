@@ -104,6 +104,89 @@ def limit(vals, k, raw):
     return vals
 
 
+# ---------- motor protection rows (TeSys GV / LUB, Integral 63, iC60L MA / NG125L MA) ----------
+# The catalogue writes these as "<code> <setting range>" in many variants: "01 0.1...0.16", "03 LRD3 0.25...0.40",
+# "1.6 LRD6 1...1.6" (MA rating + thermal relay), "100 kA LRD 03 0.25/0.40" (690 V), "LB1-LD03M16 10-13" ...
+# They are turned into one label per device, identical in every table:  "0,25–0,4 A · 03 + LRD03".
+MOTOR = re.compile(r'^(TeSys |Integral 63|iC60L MA|NG125L MA)')
+# known misprints in the 2026 guide (setting ranges confirmed by the other tables / the product range)
+MOTOR_FIX = {('TeSys GV3', '13'): (9, 13), ('Integral 63', 'LB1-LD03M16'): (10, 13)}
+
+
+def dk(x):
+    return ('%g' % x).replace('.', ',')
+
+
+def range_relay(s):
+    """'03 LRD3 0.25...0.40' -> (0.25, 0.4, 'LRD03', '03'); None when there is no setting range."""
+    found = list(re.finditer(r'(\d+(?:[.,]\d+)?)\s*(?:\.\.\.|/|-)\s*(\d+(?:[.,]\d+)?)', s))
+    if not found:
+        return None
+    last = found[-1]
+    head = s[:last.start()].strip()
+    # thermal relay: LRD6, LRD 03, LRD-07, LRD3355, LRD 33 55, LRD-33 63, LR9D-5369 ...
+    relay = re.search(r'LR[0-9A-Z]*(?:[\s-]*\d+(?![\d.,/]))*', head)
+    rl = ''
+    if relay:
+        rl = re.sub(r'[\s-]', '', relay.group(0))
+        rl = re.sub(r'^LRD(\d)$', r'LRD0\1', rl)
+        rl = 'LR9' if rl.startswith('LR9') else rl   # LR9D5369 / LR9-F5369 / LR9/F-5369: written differently per table
+        head = (head[:relay.start()] + head[relay.end():]).strip()
+    return num(last.group(1)), num(last.group(2)), rl, head
+
+
+def motor(fam, rating, k):
+    """-> (k with udførelse filled in, label or '' for a row that covers all sizes)."""
+    s = re.sub(r'\.{2,}|…', '...', clean(rating))
+    s = re.sub(r'\b\d+\s*kA\b|Integrated', ' ', s).strip()
+    series = k[0][0]
+    # udførelse from the device name: GV2 ME01 / GV2 L03 / GV3 P13 / GV4 P/PE/PEM ...
+    gv = re.search(r'GV\d\s?(ME|PEM|PE|P|LE|L)\s?(\d{2,3})', fam)
+    if gv and series.startswith('TeSys GV') and not k[0][1]:
+        k = [[x[0], [gv.group(1)], x[2]] for x in k]
+    g56 = re.search(r'GV([56])\s?P\s?(\d{3})', fam)
+    if g56:
+        return k, '%s A · GV%sP%s' % (g56.group(2), g56.group(1), g56.group(2))
+    parts = range_relay(s)
+    if not parts:
+        return k, ''                                 # summary row ("GV2 ME01...ME32") = all sizes
+    lo, hi, rl, head = parts
+    tok = head.split()[0] if head.split() else ''
+    if series.endswith(' MA'):
+        ref = 'MA' + dk(num(tok)) if re.fullmatch(r'\d+(?:[.,]\d+)?', tok) else ''
+    elif series == 'Integral 63':
+        ref = tok
+    elif series.startswith('TeSys U'):
+        code = re.sub(r'^LUC\W*', '', tok) or re.sub(r'.*LUC\W*', '', fam)
+        if not re.fullmatch(r'X6|1X|\d{2}', code):
+            return k, ''                             # "LUB12 + LUC• 6...12" = all sizes
+        ref = 'LUC•' + code
+    else:
+        ref = tok if re.fullmatch(r'\d{2,3}', tok) else (gv.group(2) if gv else tok)
+    if (series, ref) in MOTOR_FIX:
+        lo, hi = MOTOR_FIX[(series, ref)]
+    ref = ' + '.join(x for x in (ref, rl) if x)
+    return k, '%s–%s A' % (dk(lo), dk(hi)) + (' · ' + ref if ref else '')
+
+
+# ---------- MasterPacT MTZ / ComPacT NS as downstream device ----------
+# The frame ("MTZ1 06", "NS800") is written either in the device column ("MTZ1 06 H1/H2 MicroLogic X" + trip unit
+# rating "400") or in the rating column ("MasterPacT MTZ1 H1 MicroLogic" + "MTZ1 06"). The frame becomes the
+# Mærkestrøm choice ("630 A · MTZ1 06") and the trip unit rating the Indstilling choice ("Udløser 400 A").
+FRAME_A = {'06': 630, '08': 800, '10': 1000, '12': 1250, '16': 1600, '20': 2000, '25': 2500, '32': 3200,
+           '40': 4000, '40b': 4000, '50': 5000, '63': 6300}
+
+
+def frame_label(text):
+    m = re.search(r'MTZ\s?([123])\s?(\d{2}b?)(?!\s*[-–/]\s*\d)', text)
+    if m and m.group(2) in FRAME_A:
+        return '%d A · MTZ%s %s' % (FRAME_A[m.group(2)], m.group(1), m.group(2))
+    m = re.search(r'(?<!X)\bNS\s?(\d{3,4})(\s?b)?(?!\d|\s*[-–]\s*\d)', text)
+    if m:
+        return '%s A · NS%s%s' % (m.group(1), m.group(1), 'b' if m.group(2) else '')
+    return None
+
+
 def convert(t, src):
     up_title, dn_title = clean(t['up']), clean(t['dn'])
     cols = []
@@ -118,16 +201,54 @@ def convert(t, src):
         cols.append(dict(k=keys(prod, up_title, num(In)), In=In or '', st=st,
                          raw=(prod + ' · ' + clean(c['rating'])).strip(' ·')))
     rows = []
-    for r in t['rows']:
-        vals, ir, lab = dn_rating(r['rating'])
-        fam = re.sub(r'^stream\s+|\s+Downstream$', '', clean(r['family'])).replace('iiC40', 'iC40')
+    fams = [re.sub(r'^stream\s+|\s+Downstream$', '', clean(r['family'])).replace('iiC40', 'iC40') for r in t['rows']]
+    # NSX motor rows printed over two lines: "NSX100 F/N/H/S/" + "L/R", "NSX100" + "F/N/H/S/L/R" -> one name for both
+    for i in range(1, len(fams)):
+        if re.match(r'^(?:ComPacT\s*)?NSX\d{3}', fams[i - 1]) and \
+                re.fullmatch(r'[A-Z]{1,2}(?:\s*/\s*[A-Z]{1,2})*/?|MicroLogic.*', fams[i]):
+            whole = fams[i - 1] + ('' if fams[i - 1].endswith('/') else ' ') + fams[i]
+            fams[i - 1] = fams[i] = whole
+    prev_rating = ''
+    for r, fam in zip(t['rows'], fams):
+        rating = r['rating'] or ''
+        mic = re.match(r'^(?:Mic\.?\s*2\.2M|or\s*6\.2E?M)\s*', rating)
+        if mic:                                   # "Mic. 2.2M 25...50" / "or 6.2EM 100 (80)"
+            fam, rating = fam + ' MicroLogic 2.2M/6.2M', rating[mic.end():]
+        vals, ir, lab = dn_rating(re.sub(r'\s*(?:\.{2,}|…)\s*', '-', rating) if mic else rating)
         amps = max([num(v) for v in vals] or [0]) if vals else None
-        k = keys(fam, dn_title, amps)
-        size = re.fullmatch(r'\s*(?:ComPacT\s*)?NSX\s?(\d{3})\s*', r['rating'] or '')
-        if size and any(x[0] == 'ComPacT NSX' for x in k):   # frame size written in the rating column
-            k = [['ComPacT NSX' + size.group(1) if x[0] == 'ComPacT NSX' else x[0], x[1], x[2]] for x in k]
-            vals, lab = None, ''
-        vals = limit(vals, k, r['rating'])
+        # frame size written in the rating column ("ComPacT B/F/H/N/S/L/R TM-D" + "NSX100", "ComPacT NS H" + "NS1600b"):
+        # the device is <frame> + <performance / trip unit>, and the row covers every rating of that frame
+        size = re.fullmatch(r'\s*(?:Com[Pp]ac[Tt]\s*)?(NSX\s?\d{3}|NS\s?\d{3,4}\s?b?)\s*(.*)', rating)
+        if size:
+            rest = re.sub(r'\bCom[Pp]ac[Tt]\b|\bNSX?\b(?!\s?\d)', ' ', fam)
+            k = keys(size.group(1) + ' ' + size.group(2) + ' ' + rest, dn_title)
+            ns = re.fullmatch(r'NS\s?(\d{3,4})\s?b?', size.group(1))
+            # NS630b-1600 / NS1600b-3200 are one series each: keep the frame as its In; NSX frames are own series
+            vals, lab = ([ns.group(1)], ns.group(1)) if ns else (None, '')
+        else:
+            k = keys(fam, dn_title, amps)
+        vals = limit(vals, k, rating)
+        if k and all(MOTOR.match(x[0]) for x in k):
+            k, mlab = motor(fam, rating, k)
+            vals, ir, lab = ([mlab], '', mlab) if mlab else (None, '', '')
+        elif k and all(x[0].startswith('ComPacT NSX') for x in k):
+            # NSX + MA trip unit + thermal relay: "MA2.5 LRD6 1...1.6", "NSX100 L MA 2.5" + "LRD 06 1/1.6"
+            ma = re.search(r'\bMA\s?(\d+(?:[.,]\d+)?)', fam + ' ' + rating)
+            parts = range_relay(re.sub(r'\.{2,}|…', '...', clean(rating))) if ma else None
+            if parts and parts[2]:
+                mlab = '%s–%s A · MA%s + %s' % (dk(parts[0]), dk(parts[1]), dk(num(ma.group(1))), parts[2])
+                k = [[x[0], x[1], ['MA']] for x in k]
+                vals, ir, lab = [mlab], '', mlab
+        elif k and all(re.match(r'MasterPacT MTZ|ComPacT NS(?!X)', x[0]) for x in k):
+            rt = prev_rating if rating.strip() in ('LB', 'L/LB') else rating   # "NS630bL/" + "LB" on two lines
+            fr = frame_label(rt) if re.match(r'\s*(?:Com[Pp]ac[Tt]\s*)?(?:MTZ|NS)', rt) else None
+            if fr:
+                vals, ir, lab = [fr], '', fr
+            else:
+                fr, n = frame_label(fam), re.fullmatch(r'\s*([≤≥]\s*)?(\d+)\s*', rating)
+                if fr and n:
+                    vals, ir, lab = [fr], 'Udløser %s%s A' % (n.group(1) or '', n.group(2)), fr
+        prev_rating = rating
         rows.append(dict(k=k, v=vals, ir=ir, lab=lab,
                          raw=(fam + (' · ' + clean(r['rating']) if r['rating'] else '')).strip()))
     return dict(id='%s_p%d_%d' % (src, t['page'], t['tableIndex']), src=src, page=t['page'], ref=t['ref'],
@@ -212,10 +333,10 @@ def convert_casc(t):
             rating = ''                            # stray Icu value printed in the rating column
         label = fam + (' ' + clean(r['trip']) if r['trip'] else '')
         k = keys(label, dn_title)
-        gv = re.match(r'GV\d\s?(ME|PE|P|LE|L)\d', fam)      # GV2 ME01 / GV2 P01 / GV2 L03 -> udførelse
-        if gv:
-            k = [[x[0], [gv.group(1)], x[2]] if x[0].startswith('TeSys GV') else x for x in k]
         vals = expand(rating, k)
+        if k and all(MOTOR.match(x[0]) for x in k):   # same device labels as the ordinary tables
+            k, mlab = motor(fam, clean(r['trip'] + ' ' + rating), k)
+            vals = [mlab] if mlab else None
         rng = [num(x) for x in re.findall(r'\d+(?:[.,]\d+)?', clean(rating))] if rating else []
         rows.append(dict(k=k, v=vals, rng=rng if len(rng) == 2 and '-' in rating else [], lab=clean(rating),
                          icu=clean(r['icu']), icn=clean(r['icn']),
@@ -230,6 +351,25 @@ def convert_casc(t):
 casc = []
 if casc_src:
     casc = [convert_casc(t) for t in json.load(open(casc_src, encoding='utf-8'))]
+    # motor rows: use the exact label of the ordinary tables (same series/udførelse and setting range), so the
+    # cascading lookup finds the device the user picked ("0,25–0,4 A · 03 + LRD03" also when casc says LR2 D13 03)
+    known = {}
+    for t in tables:
+        for r in t['rows']:
+            for k in r['k']:
+                if MOTOR.match(k[0]) and r['v']:
+                    for p in (k[1] or ['']):
+                        known.setdefault((k[0], p, r['v'][0].split(' · ')[0]), r['v'][0])
+    for t in casc:
+        for r in t['rows']:
+            if r['v'] and all(MOTOR.match(k[0]) for k in r['k']):
+                rng = r['v'][0].split(' · ')[0]
+                hit = [known.get((k[0], p, rng)) for k in r['k'] for p in (k[1] or [''])]
+                ref = r['v'][0].split(' · ')[1] if ' · ' in r['v'][0] else None
+                hit = [h for h in hit if h] or \
+                    [v for (s, _, x), v in known.items() if s == r['k'][0][0] and (x == rng or ref and v.endswith(' · ' + ref))]
+                if hit:
+                    r['v'] = [hit[0]]
 
 data = json.dumps(tables, ensure_ascii=False, separators=(',', ':'))
 cdata = json.dumps(casc, ensure_ascii=False, separators=(',', ':'))

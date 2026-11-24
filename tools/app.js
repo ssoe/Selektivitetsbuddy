@@ -134,7 +134,8 @@ function renderSide(side, items, kind) {
   // 2. udførelse
   let m = items.filter(it => ok(it, 1));
   const perfs = uniq(m.flatMap(it => it.k.filter(k => k[0] === sel.s).flatMap(k => k[1])));
-  const PERF_ORDER = ["E", "B", "F", "N", "H", "S", "L", "LB", "R", "P", "M", "HB1", "HB2", "N1", "H1", "H2", "H2V", "H3", "L1", "HA", "HF", "HH", "NA"];
+  const PERF_ORDER = ["E", "B", "F", "N", "H", "S", "L", "LB", "R", "P", "M", "HB1", "HB2", "N1", "H1", "H2", "H2V", "H3", "L1", "HA", "HF", "HH", "NA",
+    "ME", "PE", "PEM", "LE"];
   perfs.sort((a, b) => PERF_ORDER.indexOf(a) - PERF_ORDER.indexOf(b));
   if (sel.p && !perfs.includes(sel.p)) sel.p = null;
   if (perfs.length === 1) sel.p = perfs[0];
@@ -159,6 +160,9 @@ function renderSide(side, items, kind) {
   if (sel.i != null && !ins.includes(sel.i)) sel.i = null;
   if (ins.length === 1) sel.i = ins[0];
   show("i", ins.length > 1 || (ins.length === 1 && ins[0] !== ""));
+  // motorværn / termorelæ: listen er indstillingsområder, ikke mærkestrømme
+  $(`${side}_row_i`).querySelector("label").textContent =
+    /^(TeSys |Integral 63|iC60L MA|NG125L MA)/.test(sel.s) ? "Indstillingsområde" : STEPS[3].label;
   fillSelect(`${side}_i`, ins, sel.i, v => v === "" ? "– (ikke angivet)" : v, "— vælg —");
 
   // 5. indstilling (Ir / Im …)
