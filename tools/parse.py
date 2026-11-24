@@ -1,4 +1,4 @@
-import pymupdf, sys, re, json
+﻿import pymupdf, sys, re, json
 
 PDF = sys.argv[1]
 OUT = sys.argv[2]
@@ -6,10 +6,11 @@ PAGES = sys.argv[3] if len(sys.argv) > 3 else None
 
 GREEN_FILL = (0.28, 0.68, 0.25)
 BAND_FILL = (0.92, 0.95, 0.9)
-RATING_KW = re.compile(r'^(Rating|In \(A\)|In\b|Ir\b|Ir \(A\)|Setting|Ir setting|Setting Ir|Irth|Ir th|Im$)', re.I)
+RATING_KW = re.compile(r'^(Rating|In \(A\)|In\b|Ir\b|Ir \(A\)|Setting|Ir setting|Setting Ir|Irth|Ir th|Im$|Trip unit rating)', re.I)
 HEADER_KW = re.compile(r'^(Upstream|Downstream|Trip unit|Rating|In \(A\)|Ir|Setting|Selectivity limit|Curve)', re.I)
-HDR_LEFT_KW = re.compile(r'^(Upstream|Downstream|Down-|Trip unit|Rating|In \(A\)|In$|Ir\b|Ir \(A\)|Setting|Ir setting|Im$|Circuit)', re.I)
-FOOT_RE = re.compile(r'^(\[\d+\]|\(\d+\))$')
+HDR_LEFT_KW = re.compile(r'^(Upstream|Downstream|Down-|Trip unit|Rating|In \(A\)|In$|Ir\b|Ir \(A\)|Setting|Ir setting|Im$|Circuit|CB type|CB rating|or Trip|unit rating|rating \(A\)|\(A\)$|setting Ir)', re.I)
+FOOT_RE = re.compile(r'^(\[\s*\d+\s*\]?|\]|\(\d+\))$')
+LEGEND_RE = re.compile(r'^(Selectivity limit in kA|Selectivity limit =|Total selectivity|No selectivity|Note:|se\.com$|Selectivity, Cascading and Coordination Guide|\[\d+\]\s+\S)')
 VALUE_RE = re.compile(r'^(T|\d+(?:[.,]\d+)?)$')
 RATING_RE = re.compile(r'^(?:[≤<>⩽≥yu]\s*)?\d+(?:[.,]\d+)?(?:\s*-\s*\d+)?(?:\s*\(\w+\))?$')
 
@@ -105,14 +106,14 @@ def parse_page(doc, pno):
     bands = [r for r, f in rects if close(f, BAND_FILL)]
     greens = [r for r, f in rects if close(f, GREEN_FILL)]
 
-    ups = sorted([s for s in spans if s['t'] == 'Upstream' and s['color'] == 0xffffff], key=lambda s: s['y0'])
-    legend_y = min([s['y0'] for s in spans if re.match(r'(Selectivity limit in kA|Selectivity limit =|Total selectivity|No selectivity|Note:)', s['t'])] + [page.rect.y1])
+    ups = sorted([s for s in spans if re.match(r'^Upstream( CB)?$', s['t']) and s['color'] == 0xffffff], key=lambda s: s['y0'])
+    legend_y = page.rect.y1
     tables = []
     for ti, u in enumerate(ups):
         top = u['y0'] - 1
         bottom = ups[ti + 1]['y0'] - 1 if ti + 1 < len(ups) else legend_y
         # legend could be between tables
-        legs = [s['y0'] for s in spans if s['y0'] > top and s['y0'] < bottom and re.match(r'(Selectivity limit in kA|Selectivity limit =|Total selectivity|No selectivity|Note:)', s['t'])]
+        legs = [s['y0'] for s in spans if s['y0'] > top and s['y0'] < bottom and (LEGEND_RE.match(s['t']) or len(s['t']) > 70)]
         if legs:
             bottom = min(legs)
         tsp = [s for s in spans if top <= s['yc'] < bottom and not re.match(r'^A-\d+$', s['t'])]
@@ -126,7 +127,8 @@ def parse_page(doc, pno):
         tsp = [s for s in tsp if not FOOT_RE.match(s['t'])]
         t = parse_table(tsp, u, rects, greens, bands, hlines)
         if t:
-            t.update(page=pno, ref='A-%d' % (pno - 4), **meta)
+            refs = [s['t'] for s in spans if re.match(r'^[A-E]-\d+$', s['t'])]
+            t.update(page=pno, ref=refs[0] if refs else 'A-%d' % (pno - 4), **meta)
             nums = [float(v.rstrip('*').replace(',', '.')) for row in t['cells'] for v in row
                     if v and re.match(r'^\d+(?:[.,]\d+)?\*?$', v)]
             if t['unit'] == 'A' and nums and max(nums) < 100 and any(n != int(n) for n in nums):
@@ -141,13 +143,13 @@ def parse_page(doc, pno):
 
 def parse_table(tsp, u, rects, greens, bands, hlines):
     # X0: start of data columns = x0 of upstream product name in the Upstream row
-    row0 = [s for s in tsp if abs(s['yc'] - u['yc']) < 2.5 and s['x0'] > u['x1'] + 2]
+    row0 = [s for s in tsp if s['y0'] < u['y1'] - 1 and s['y1'] > u['y0'] + 1 and s['x0'] > u['x1'] + 2]
     if not row0:
         return None
     X0 = min(s['x0'] for s in row0) - 3
     rows = rows_of(tsp)
     for r in rows:
-        d = [s for s in r['spans'] if s['t'] in ('Downstream', 'Down-')]
+        d = [s for s in r['spans'] if s['t'] in ('Downstream', 'Down-', 'Downstream CB')]
         if d:
             nxt = [s for s in r['spans'] if s['x0'] > d[0]['x1'] + 2]
             if len(nxt) >= 2 and nxt[0]['x0'] >= X0 - 1 and RATING_KW.match(nxt[0]['t']):
@@ -182,14 +184,25 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
     dhdr = None
     for r in header_rows:
         sp = r['spans']
-        d = [s for s in sp if s['t'] in ('Downstream', 'Down-')]
+        d = [s for s in sp if s['t'] in ('Downstream', 'Down-', 'Downstream CB')]
         if d:
             nxt = [s for s in sp if s['x0'] > d[0]['x1'] + 2 and s['x0'] < X0]
             if nxt:
                 ratingX = min(s['x0'] for s in nxt)
                 dhdr = r
+    # 2026 layout: separate "CB rating" and "Trip unit setting Ir" columns
+    cbX = irX = None
+    for r in header_rows:
+        for s in r['spans']:
+            if s['x0'] < X0 and s['x0'] > tableLeft + 20:
+                if re.match(r'^CB rating', s['t']) and cbX is None:
+                    cbX = s['x0']
+                if re.match(r'^Trip unit$|^Trip unit setting|^setting Ir', s['t']) and irX is None and cbX is not None and s['x0'] > cbX + 5:
+                    irX = s['x0']
+    if cbX is not None:
+        ratingX = cbX
     if ratingX is None:
-        c = [s['x0'] for r in header_rows for s in r['spans'] if s['x0'] < X0 and s['x0'] > tableLeft + 20 and re.match(r'^Rating', s['t'])]
+        c = [s['x0'] for r in header_rows for s in r['spans'] if s['x0'] < X0 and s['x0'] > tableLeft + 20 and re.match(r'^(Rating|CB rating)', s['t'])]
         if c:
             ratingX = min(c)
     if ratingX is None:
@@ -314,6 +327,7 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
                 fam_text.setdefault(seg_of(s['yc']), []).append(s['t'])
     out_rows, cells = [], []
     cur_mid, cur_seg = '', None
+    cur_cb, cur_cb_seg = '', None
     for r in body_rows:
         if r['band']:
             continue
@@ -324,7 +338,16 @@ def parse_table(tsp, u, rects, greens, bands, hlines):
             if is_mid(s):
                 cur_mid = s['t']
         right = [s for s in r['spans'] if s['x0'] >= X0 - 1 and not re.match(r'Selectivity\s*limit', s['t'])]
-        rt = ' '.join(s['t'] for s in r['spans'] if ratingX - 3 <= s['x0'] < X0)
+        if irX is not None:
+            cb = ' '.join(s['t'] for s in r['spans'] if ratingX - 3 <= s['x0'] < irX - 3)
+            ir = ' '.join(s['t'] for s in r['spans'] if irX - 3 <= s['x0'] < X0)
+            if sg != cur_cb_seg:
+                cur_cb, cur_cb_seg = '', sg
+            if cb:
+                cur_cb = cb
+            rt = (f"{cur_cb} / Ir {ir}" if cur_cb else f"Ir {ir}") if ir else cb
+        else:
+            rt = ' '.join(s['t'] for s in r['spans'] if ratingX - 3 <= s['x0'] < X0)
         rt = re.sub(r'^y\s*', '≤ ', rt)
         rt = re.sub(r'^u\s*', '≥ ', rt)
         if not right and not rt:
@@ -367,3 +390,6 @@ def main():
 
 
 main()
+
+
+

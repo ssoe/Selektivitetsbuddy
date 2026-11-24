@@ -68,7 +68,7 @@ button:hover { border-color: var(--accent); }
 <body>
 <header>
   <h1>Selektivitetsbuddy</h1>
-  <p>Selektivitet mellem to beskyttelseskomponenter ifølge Schneider Electric „Complementary technical information" (katalog 2019), selektivitetstabeller A-15 – A-152.</p>
+  <p>Selektivitet mellem to beskyttelseskomponenter ifølge Schneider Electric „Selectivity, Cascading and Coordination Guide" (september 2026). iDPN-tabeller, som ikke længere findes i 2026-guiden, er bevaret fra 2019-kataloget og markeret.</p>
 </header>
 <main>
   <section class="card full">
@@ -104,15 +104,21 @@ button:hover { border-color: var(--accent); }
     <div class="legend"><span class="l1">T = total selektivitet (op til downstream-afbryderens brydeevne)</span><span class="l2">Tal = delvis selektivitet op til den angivne grænse</span><span class="l3">Tom celle = ingen selektivitet</span></div>
     <div id="out" class="results" style="margin-top:12px"><p class="hint">Vælg upstream- og downstream-komponent for at se selektiviteten.</p></div>
   </section>
-  <p class="hint full" style="margin:0">Ansvarsfraskrivelse: Data er udtrukket automatisk fra Schneider Electric „Complementary technical information – Low Voltage" (katalog 2019) og kan indeholde fejl. Kataloget er den gældende kilde – kontrollér altid resultatet mod den angivne katalogside, inden det bruges i projektering. Værktøjet er ikke udgivet af eller tilknyttet Schneider Electric.</p>
+  <p class="hint full" style="margin:0">Ansvarsfraskrivelse: Data er udtrukket automatisk fra Schneider Electric „Selectivity, Cascading and Coordination Guide" (2026) og – for iDPN – „Complementary technical information" (2019), og kan indeholde fejl. Kataloget er den gældende kilde – kontrollér altid resultatet mod den angivne katalogside, inden det bruges i projektering. Værktøjet er ikke udgivet af eller tilknyttet Schneider Electric.</p>
 </main>
 <script>
 const DATA = /*__DATA__*/null;
-// PDF'en lægges valgfrit ved siden af index.html (den er ikke med i git-repo'et).
-// Findes den ikke, vises kun sidehenvisningen som tekst.
-const PDF = "Schneider - Selektivitetstabeller.pdf";
-let pdfAvailable = location.protocol === "file:"; // fetch virker ikke på file://, antag at PDF'en ligger der lokalt
-fetch(encodeURI(PDF), { method: "HEAD" }).then(r => { pdfAvailable = r.ok; render(); }).catch(() => {});
+// PDF'erne lægges valgfrit ved siden af index.html (de er ikke med i git-repo'et).
+// Findes en PDF ikke, vises kun sidehenvisningen som tekst.
+const PDFS = {
+  "2026": { file: "Selektivitetstabeller 2026.pdf", name: "Selectivity, Cascading and Coordination Guide (2026)" },
+  "2019": { file: "Schneider - Selektivitetstabeller.pdf", name: "Complementary technical information (2019)" },
+};
+const pdfAvailable = {};
+for (const [k, p] of Object.entries(PDFS)) {
+  pdfAvailable[k] = location.protocol === "file:"; // fetch virker ikke på file://, antag at PDF'en ligger der lokalt
+  fetch(encodeURI(p.file), { method: "HEAD" }).then(r => { pdfAvailable[k] = r.ok; render(); }).catch(() => {});
+}
 const $ = id => document.getElementById(id);
 const S = { volt: "", up: null, upr: null, dn: null, dnr: null };
 
@@ -225,16 +231,18 @@ function renderResult(pairTabs) {
     }
     const ratioNote = t.ratio ? `<div>Sikring/sikring: total selektivitet kræver at downstream-sikringen ikke overstiger tabelværdien (IEC 60269). Katalogets værdi „8000" ved 1250 A er tolket som 800 A.</div>` : "";
     const footNote = k.foot ? `<div><b>OBS:</b> Værdien har en fodnote i kataloget – læs fodnoten på siden.</div>` : "";
-    const pdfLink = pdfAvailable
-      ? `<a href="${encodeURI(PDF)}#page=${t.page}" target="_blank" rel="noopener">${t.ref} (PDF-side ${t.page})</a>`
-      : `Schneider Electric katalog side ${t.ref} (PDF-side ${t.page})`;
+    const P = PDFS[t.src];
+    const pdfLink = (pdfAvailable[t.src]
+      ? `<a href="${encodeURI(P.file)}#page=${t.page}" target="_blank" rel="noopener">${t.ref} (PDF-side ${t.page})</a>`
+      : `side ${t.ref} (PDF-side ${t.page})`) + ` · ${P.name}`;
+    const oldNote = t.src === "2019" ? `<div><b>OBS:</b> Tabellen findes kun i 2019-kataloget og er ikke med i 2026-guiden – kontrollér om produktet stadig er aktuelt.</div>` : "";
     div.innerHTML = `
       <div class="verdict">${verdict}</div>${ikLine}
       <div class="meta">
         <div><b>Upstream:</b> ${esc(S.up)} · ${esc(ratingLabel(S.upr))}</div>
         <div><b>Downstream:</b> ${esc(S.dn)} · ${esc(ratingLabel(S.dnr))}${t.ctx ? " · " + esc(t.ctx) : ""}</div>
         <div><b>Tabel:</b> ${esc(t.up)} → ${esc(t.dn)} · ${esc(t.volt)} · værdier i ${t.unit}</div>
-        <div><b>Kilde:</b> ${pdfLink}</div>${footNote}${ratioNote}
+        <div><b>Kilde:</b> ${pdfLink}</div>${oldNote}${footNote}${ratioNote}
       </div>
       ${strip(t, c, r)}`;
     out.appendChild(div);
